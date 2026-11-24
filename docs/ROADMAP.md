@@ -19,6 +19,11 @@ An independent integration engineer that observes, diagnoses and eventually prop
 - Import approved HAR/fixtures with automatic secret redaction. Teach mode records developer-approved browser actions and parameters. Rank multiple candidate network requests using action association, structure and business meaning; show confidence, allow manual confirmation.
 - Angular frontend, ASP.NET API, PostgreSQL and migrations; authentication, tenant isolation and audit logs.
 
+## Batch 03 progress: browser discovery
+
+- Delivered editable local lab workflows, bounded multi-request capture, synthetic HAR import, structural fingerprints, ranked candidate matching and source-impact mapping. Build and browser verification pending.
+- Remaining: actual browser action recorder, persistent versioned workflow and baseline profiles, runtime adapters, and approved generalized provider onboarding.
+
 ## Phase 3: runtime ingestion
 
 - Define a versioned event envelope with execution ID, bot ID, DLL hash, scenario ID, request sequence, outcome and trace correlation.

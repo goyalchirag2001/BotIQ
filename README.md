@@ -1,6 +1,10 @@
 # BotIQ — Autonomous Integration Intelligence
 
-**v0.2 / local proof of concept**. A developer-infrastructure project that detects breaking provider contracts by comparing a known-good baseline, an existing C# bot, and independently captured browser traffic. All data and endpoints are synthetic. No employer assets, credentials, real provider data or production connectivity are included.
+**v0.3 / local proof of concept**. A developer-infrastructure project that detects breaking provider contracts by comparing a known-good baseline, an existing C# bot, and independently captured browser traffic. All data and endpoints are synthetic. No employer assets, credentials, real provider data or production connectivity are included.
+
+## Batch 03
+
+Configurable synthetic browser workflows, multi-request capture, HAR import, fingerprint-based candidate ranking and optional source-impact mapping. See [Batch 03 instructions](docs/BATCH-03.md). Open `/discovery.html` in the running local API. The previous lab and registry remain available.
 
 ## Batch 02
 
@@ -59,7 +63,7 @@ node tests/provider_smoke.mjs
 node scripts/api-smoke.mjs
 ```
 
-The first command runs 29 C# assertions (including Roslyn analysis). The second tests the provider HTTP contract; the third runs the full API workflow and resets the mock provider to v1. An independent browser/provider smoke test is also included (stop any running provider first):
+The first command runs 39 C# assertions (including Roslyn and discovery analysis). The second tests the provider HTTP contract; the third runs the full API workflow and resets the mock provider to v1. An independent browser/provider smoke test is also included (stop any running provider first):
 
 ```sh
 python -m pip install playwright
@@ -100,7 +104,7 @@ POST requests require `X-BotIQ-Lab: 1`. Both services bind loopback only. The ba
 
 ## Verification status
 
-The provided environment had Node.js and Chromium but no .NET SDK and no access to NuGet restore. The Node provider HTTP smoke test passed (both versions, invalid contract rejection and null response). The independent real-browser smoke test was attempted but blocked by the environment’s Chromium policy (`ERR_BLOCKED_BY_ADMINISTRATOR` on loopback navigation). The v0.1 build succeeded on the user’s machine. The v0.2 .NET build, 29 C# assertions, registry smoke test and real-browser end-to-end tests must still be executed locally or in CI. The UI is not an Angular app yet. Original root cause messages refer to known demo methods; selecting a source snapshot in v0.2 additionally displays Roslyn-derived candidate locations. No GitHub repository has been created or modified.
+The provided environment had Node.js and Chromium but no .NET SDK and no access to NuGet restore. The Node provider HTTP smoke test passed (both versions, invalid contract rejection and null response). The independent real-browser smoke test was attempted but blocked by the environment’s Chromium policy (`ERR_BLOCKED_BY_ADMINISTRATOR` on loopback navigation). The v0.1 build succeeded on the user’s machine. The v0.3 .NET build, 39 C# assertions, discovery/registry smoke tests and real-browser end-to-end tests must still be executed locally or in CI. The UI is not an Angular app yet. Original root cause messages refer to known demo methods; selecting a source snapshot in v0.2 additionally displays Roslyn-derived candidate locations. No GitHub repository has been created or modified.
 
 ## References
 

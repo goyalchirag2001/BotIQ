@@ -58,5 +58,19 @@ class Legacy { void Send() {
 """)]);
 Check(legacy.Evidence.Any(e => e.Kind == "Operation" && e.Key == "OldSearch"), "legacy concatenated POST operation");
 Check(legacy.Evidence.Any(e => e.Kind == "PayloadMember" && e.Key == "hotelId"), "legacy concatenated POST key");
-Console.WriteLine("29 assertions passed.");
+var baselineFingerprint = Discovery.FingerprintOf(v1 with { Headers = new() { ["content-type"] = "application/json", ["x-demo-contract"] = "1", ["authorization"] = "secret" }, Path = "/api/hotel/search?token=secret" });
+var nextFingerprint = Discovery.FingerprintOf(v2);
+var ping = Discovery.FingerprintOf(new Exchange("browser", "GET", "/api/ping", new(), "", 200, "{\"ok\":true}"));
+Check(baselineFingerprint.Path == "/api/hotel/search", "fingerprint omits query values");
+Check(!baselineFingerprint.Headers.ContainsKey("authorization"), "fingerprint drops secret headers");
+Check(!baselineFingerprint.RequestShape.Values.Contains("HOTEL-101"), "fingerprint drops scalar values");
+var match = Discovery.Match(baselineFingerprint, [ping, nextFingerprint, ping]);
+Check(match.SelectedIndex == 1, "replacement ranked above unrelated traffic");
+Check(match.Differences.Any(x => x.Path == "endpoint"), "replacement endpoint diff");
+Check(match.Differences.Any(x => x.Path == "$.operationName"), "replacement operation diff");
+Check(match.Differences.Any(x => x.Path == "$.data.rates[*].translatedName"), "replacement schema diff");
+Check(Discovery.Match(baselineFingerprint, [nextFingerprint, nextFingerprint]).Outcome == "Ambiguous", "tie is not auto-selected");
+Check(Discovery.Match(baselineFingerprint, [ping]).SelectedIndex is null, "weak match rejected");
+Check(Discovery.Match(baselineFingerprint, []).SelectedIndex is null, "empty capture rejected");
+Console.WriteLine("39 assertions passed.");
 static void Check(bool ok,string name){if(!ok)throw new Exception($"FAIL: {name}");Console.WriteLine($"PASS: {name}");}

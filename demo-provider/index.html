@@ -9,6 +9,9 @@ document.querySelector('#search').addEventListener('click', async () => {
  const propertyId = document.querySelector('#property').value;
  const payload = version === 1 ? {operationName:'HotelSearchV1',variables:{hotelId:propertyId,currency:'USD'}} : {operationName:'PropertyAvailability',variables:{propertyId,currency:'USD'}};
  const response = await fetch(version === 1 ? '/api/hotel/search' : '/api/v2/availability', {method:'POST',headers:{'content-type':'application/json','x-demo-contract':String(version)},body:JSON.stringify(payload)});
- document.querySelector('#results').textContent = JSON.stringify(await response.json(),null,2);
+ const rates = await response.json();
+ // Unrelated same-origin traffic deliberately included for candidate ranking.
+ await (await fetch('/api/ping')).json();
+ document.querySelector('#results').textContent = JSON.stringify(rates,null,2);
 });
 </script></html>

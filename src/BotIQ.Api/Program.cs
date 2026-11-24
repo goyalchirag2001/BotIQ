@@ -1,11 +1,14 @@
 using BotIQ.Api;
 using BotIQ.CodeIntelligence;
+using BotIQ.Core;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:5070");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 6_500_000);
 builder.Services.AddSingleton<BotRegistry>();
 builder.Services.AddSingleton<BrowserProbe>();
+builder.Services.AddSingleton<WorkflowDiscovery>();
 builder.Services.AddSingleton(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
     { BaseAddress = BrowserProbe.Provider, Timeout = TimeSpan.FromSeconds(15) });
 builder.Services.AddSingleton<InvestigationService>();
@@ -45,6 +48,24 @@ app.MapPost("/api/bots/{id:guid}/demo-investigation", async (Guid id, BotRegistr
         return new { investigation, sourceSnapshot = new { bot.Id, bot.Name, bot.Version, bot.SourceHash }, impact };
     });
 });
+app.MapPost("/api/discovery/capture", async (BrowserWorkflow workflow, WorkflowDiscovery discovery, CancellationToken ct) =>
+    await Run(() => discovery.CaptureAsync(workflow, ct)));
+app.MapPost("/api/discovery/har", (JsonElement har) =>
+    Run(() => Task.FromResult(WorkflowDiscovery.ImportHar(har))));
+app.MapPost("/api/discovery/compare", async (DiscoveryCompare input, WorkflowDiscovery discovery, BotRegistry registry, CancellationToken ct) =>
+    await Run(async () =>
+    {
+        var baseline = input.Baseline;
+        if (baseline is null || baseline.Path is null || !baseline.Path.StartsWith("/api/", StringComparison.Ordinal) || baseline.Method is not ("GET" or "POST") || baseline.Status is < 200 or >= 300 || baseline.Headers is null || baseline.RequestShape is null || baseline.ResponseShape is null || baseline.RequestShape.Count > 1000 || baseline.ResponseShape.Count > 1000 || baseline.Headers.Count > 2)
+            throw new ArgumentException("Choose a valid successful lab baseline fingerprint.");
+        var bot = input.BotId is { } id ? await registry.GetAsync(id, ct) : null;
+        if (input.BotId.HasValue && bot is null) throw new ArgumentException("Source snapshot not found.");
+        var capture = await discovery.CaptureAsync(input.Workflow, ct);
+        if (capture.Truncated) throw new InvalidOperationException("Capture was incomplete; no match was selected.");
+        var match = Discovery.Match(baseline, capture.Requests);
+        var impact = bot is null ? null : SourceAnalyzer.MapImpact(bot.Analysis, match.Differences);
+        return new { capture, match, impact };
+    }));
 app.Run();
 
 static async Task<IResult> Run<T>(Func<Task<T>> action)
@@ -52,6 +73,7 @@ static async Task<IResult> Run<T>(Func<Task<T>> action)
     try { return Results.Ok(await action()); }
     catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
     catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 409); }
+    catch (TimeoutException) { return Results.Problem("Browser capture timed out.", statusCode: 504); }
     catch (HttpRequestException ex) { return Results.Problem($"Demo provider unavailable: {ex.Message}", statusCode: 502); }
     catch (Microsoft.Playwright.PlaywrightException ex) { return Results.Problem($"Browser probe failed: {ex.Message}", statusCode: 502); }
 }
