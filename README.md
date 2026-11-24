@@ -110,3 +110,7 @@ The provided environment had Node.js and Chromium but no .NET SDK and no access 
 
 - Playwright .NET network API: https://playwright.dev/dotnet/docs/network
 - Playwright .NET package: https://www.nuget.org/packages/Microsoft.Playwright/1.64.1
+
+## Batch 04
+
+See [Batch 04 — advanced intelligence and browser reliability](docs/BATCH-04.md). Both provider and API must be restarted after updating. Browser capture now has configurable timeouts and stage diagnostics; HAR and source limits have increased. The local Advanced intelligence page is `/intelligence.html`.

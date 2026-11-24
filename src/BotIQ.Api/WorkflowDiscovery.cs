@@ -1,18 +1,17 @@
 using System.Text;
 using System.Text.Json;
 using BotIQ.Core;
-using Microsoft.Playwright;
+
 
 namespace BotIQ.Api;
 
 public sealed record BrowserStep(string Action, string Selector, string? Value);
 public sealed record BrowserWorkflow(string Name, IReadOnlyList<BrowserStep> Steps);
-public sealed record CaptureReport(string Workflow, IReadOnlyList<Fingerprint> Requests, bool Truncated);
+public sealed record CaptureReport(string Workflow, IReadOnlyList<Fingerprint> Requests, bool Truncated, IReadOnlyList<string> Diagnostics);
 public sealed record DiscoveryCompare(Fingerprint Baseline, BrowserWorkflow Workflow, Guid? BotId = null);
 
-public sealed class WorkflowDiscovery
+public sealed class WorkflowDiscovery(BrowserProbe browser)
 {
-    private readonly SemaphoreSlim gate = new(1, 1);
     public static bool Allowed(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == BrowserProbe.Provider.Scheme && uri.Host == BrowserProbe.Provider.Host && uri.Port == BrowserProbe.Provider.Port && string.IsNullOrEmpty(uri.UserInfo);
     public static bool AllowedRequest(string url, string method) => Allowed(url) && new Uri(url).AbsolutePath.StartsWith("/api/", StringComparison.Ordinal) && method is "GET" or "POST";
@@ -33,62 +32,17 @@ public sealed class WorkflowDiscovery
     }
     public async Task<CaptureReport> CaptureAsync(BrowserWorkflow workflow, CancellationToken ct)
     {
-        Validate(workflow);
-        if (!await gate.WaitAsync(0, ct)) throw new InvalidOperationException("A browser investigation is already running.");
-        try
-        {
-            using var playwright = await Playwright.CreateAsync();
-            await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true, Timeout = 10000 });
-            await using var context = await browser.NewContextAsync(new() { ServiceWorkers = ServiceWorkerPolicy.Block });
-            await context.RouteAsync("**/*", route =>
-            {
-                if (!Allowed(route.Request.Url)) return route.AbortAsync();
-                var path = new Uri(route.Request.Url).AbsolutePath;
-                return (path == "/" && route.Request.Method == "GET") || AllowedRequest(route.Request.Url, route.Request.Method)
-                    ? route.ContinueAsync() : route.AbortAsync();
-            });
-            var page = await context.NewPageAsync();
-            page.SetDefaultTimeout(4000);
-            var responses = new List<IResponse>(); bool truncated = false;
-            page.Response += (_, response) =>
-            {
-                if (!AllowedRequest(response.Url, response.Request.Method) || response.Request.ResourceType is not ("fetch" or "xhr")) return;
-                lock (responses) { if (responses.Count < 30) responses.Add(response); else truncated = true; }
-            };
-            await page.GotoAsync(BrowserProbe.Provider.AbsoluteUri, new() { Timeout = 6000 });
-            foreach (var step in workflow.Steps)
-            {
-                ct.ThrowIfCancellationRequested();
-                var locator = page.Locator(step.Selector);
-                switch (step.Action)
-                {
-                    case "fill": await locator.FillAsync(step.Value!); break;
-                    case "click": await locator.ClickAsync(); break;
-                    case "wait": await locator.WaitForAsync(new() { State = WaitForSelectorState.Visible }); break;
-                }
-            }
-            // The explicit completion selector guarantees the lab's search requests have completed.
-            IResponse[] snapshot; lock (responses) snapshot = responses.ToArray();
-            var result = new List<Fingerprint>();
-            foreach (var response in snapshot)
-            {
-                ct.ThrowIfCancellationRequested();
-                var headers = await response.Request.AllHeadersAsync();
-                var body = await response.TextAsync().WaitAsync(TimeSpan.FromSeconds(4), ct);
-                if (body.Length > Discovery.MaxBody || (response.Request.PostData?.Length ?? 0) > Discovery.MaxBody) { truncated = true; continue; }
-                result.Add(Discovery.FingerprintOf(new Exchange("browser", response.Request.Method, new Uri(response.Url).AbsolutePath,
-                    new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase), response.Request.PostData ?? "", response.Status, body)));
-            }
-            return new(workflow.Name, result, truncated);
-        }
-        finally { gate.Release(); }
+        var raw = await browser.CaptureWorkflowAsync(workflow, ct);
+        var requests = raw.Exchanges.Select(Discovery.FingerprintOf).ToArray();
+        return new(workflow.Name, requests, raw.Truncated || requests.Any(r => r.Incomplete), raw.Diagnostics);
     }
     public static IReadOnlyList<Fingerprint> ImportHar(JsonElement har)
     {
         if (har.ValueKind != JsonValueKind.Object || !har.TryGetProperty("log", out var log) || log.ValueKind != JsonValueKind.Object || !log.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array)
             throw new ArgumentException("Expected HAR log.entries array.");
-        if (entries.GetArrayLength() > 500) throw new ArgumentException("Maximum 500 HAR entries.");
+        if (entries.GetArrayLength() > 20_000) throw new ArgumentException("Maximum 20,000 HAR entries.");
         var result = new List<Fingerprint>();
+        long totalPaths = 0;
         foreach (var entry in entries.EnumerateArray())
         {
             var request = Child(entry, "request"); var response = Child(entry, "response");
@@ -97,18 +51,27 @@ public sealed class WorkflowDiscovery
             var statusNode = Child(response, "status");
             if (statusNode.ValueKind != JsonValueKind.Number || !statusNode.TryGetInt32(out var status) || status is < 100 or > 599) continue;
             var post = String(Child(request, "postData"), "text"); var content = Child(response, "content"); var body = String(content, "text");
+            bool missingBody = status is >= 200 and < 300 && Child(content, "text").ValueKind != JsonValueKind.String;
             if (String(content, "encoding") == "base64")
             {
-                try { if (body.Length > Discovery.MaxBody * 2) continue; body = Encoding.UTF8.GetString(Convert.FromBase64String(body)); }
-                catch (FormatException) { continue; }
+                try { if (body.Length > Discovery.MaxBody * 2) { missingBody = true; body = ""; } else body = Encoding.UTF8.GetString(Convert.FromBase64String(body)); }
+                catch (FormatException) { missingBody = true; body = ""; }
             }
-            if (post.Length > Discovery.MaxBody || body.Length > Discovery.MaxBody) continue;
+            if (post.Length > Discovery.MaxBody || body.Length > Discovery.MaxBody)
+            {
+                result.Add(new(method, new Uri(url).AbsolutePath, status, null, new(), new(), new(), true));
+                if (result.Count >= 500) break;
+                continue;
+            }
             var headers = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
             var headerArray = Child(request, "headers");
             if (headerArray.ValueKind == JsonValueKind.Array)
                 foreach (var item in headerArray.EnumerateArray()) { var name = String(item, "name"); if (name.Equals("content-type", StringComparison.OrdinalIgnoreCase) || name.Equals("x-demo-contract", StringComparison.OrdinalIgnoreCase)) headers[name] = String(item, "value"); }
-            result.Add(Discovery.FingerprintOf(new Exchange("har", method, new Uri(url).AbsolutePath, headers, post, status, body)));
-            if (result.Count >= 30) break;
+            var fingerprint = Discovery.FingerprintOf(new Exchange("har", method, new Uri(url).AbsolutePath, headers, post, status, body));
+            totalPaths += fingerprint.RequestShape.Count + fingerprint.ResponseShape.Count;
+            if (totalPaths > 100_000) throw new ArgumentException("HAR contains more than 100,000 schema paths across eligible entries. Split it into smaller captures.");
+            result.Add(fingerprint with { Incomplete = fingerprint.Incomplete || missingBody });
+            if (result.Count >= 500) break;
         }
         return result;
     }

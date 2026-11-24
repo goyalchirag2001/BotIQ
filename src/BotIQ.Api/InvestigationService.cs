@@ -43,7 +43,7 @@ public sealed class InvestigationService(HttpClient http, BrowserProbe browser, 
         {
             if (await VersionAsync(ct) != 1) throw new InvalidOperationException("Restore provider v1 before capturing the known-good baseline.");
             var bot = await new HotelBot(http).ExecuteAsync(DemoScenario, ct);
-            var capture = await browser.CaptureAsync(DemoScenario);
+            var capture = await browser.CaptureAsync(DemoScenario, ct);
             var browserOutput = HotelBot.Parse(capture.ResponseBody);
             if (bot.Output.Error != null || bot.Output.RateCount == 0 || capture.Status != 200 ||
                 browserOutput.Error != null || browserOutput.RateCount != bot.Output.RateCount ||
@@ -67,7 +67,7 @@ public sealed class InvestigationService(HttpClient http, BrowserProbe browser, 
             var baseline = await GetBaselineAsync(ct) ?? throw new InvalidOperationException("Capture a healthy baseline first.");
             var version = await VersionAsync(ct);
             var bot = await new HotelBot(http).ExecuteAsync(baseline.Scenario, ct);
-            var live = await browser.CaptureAsync(baseline.Scenario);
+            var live = await browser.CaptureAsync(baseline.Scenario, ct);
             if (await VersionAsync(ct) != version) throw new InvalidOperationException("Provider version changed during investigation; retry.");
             var historical = ContractComparer.Compare(baseline.Browser, live);
             var current = ContractComparer.Compare(bot.Exchange, live, compareResponse: false);

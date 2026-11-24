@@ -6,12 +6,18 @@
 const version = __VERSION__;
 fetch('/api/ping');
 document.querySelector('#search').addEventListener('click', async () => {
+ const result = document.querySelector('#results');
+ result.dataset.state = 'loading'; result.textContent = '';
+ try {
  const propertyId = document.querySelector('#property').value;
  const payload = version === 1 ? {operationName:'HotelSearchV1',variables:{hotelId:propertyId,currency:'USD'}} : {operationName:'PropertyAvailability',variables:{propertyId,currency:'USD'}};
  const response = await fetch(version === 1 ? '/api/hotel/search' : '/api/v2/availability', {method:'POST',headers:{'content-type':'application/json','x-demo-contract':String(version)},body:JSON.stringify(payload)});
+ if (!response.ok) throw Error(`Search HTTP ${response.status}`);
  const rates = await response.json();
  // Unrelated same-origin traffic deliberately included for candidate ranking.
  await (await fetch('/api/ping')).json();
- document.querySelector('#results').textContent = JSON.stringify(rates,null,2);
+ result.textContent = JSON.stringify(rates,null,2);
+ result.dataset.state = 'complete';
+ } catch (error) { result.textContent = 'Search failed: ' + error.message; result.dataset.state = 'error'; }
 });
 </script></html>

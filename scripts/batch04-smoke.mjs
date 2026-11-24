@@ -1,0 +1,14 @@
+// Run both updated servers first. Synthetic evidence only.
+import assert from 'node:assert/strict';
+const base='http://127.0.0.1:5070/api/';
+async function call(path,data,status=200){const r=await fetch(base+path,data===undefined?{}:{method:'POST',headers:{'X-BotIQ-Lab':'1','content-type':'application/json'},body:JSON.stringify(data)});const x=await r.json();assert.equal(r.status,status,JSON.stringify(x).slice(0,1000));return x;}
+const workflow={name:'Hotel rate search',steps:[{action:'fill',selector:'#property',value:'HOTEL-101'},{action:'click',selector:'#search'},{action:'wait',selector:'#results:not(:empty)'}]};
+const har={log:{entries:[{request:{method:'POST',url:'http://127.0.0.1:5071/api/hotel/search',headers:[{name:'content-type',value:'application/json'}],postData:{text:'{"operationName":"HotelSearchV1","variables":{"hotelId":"H1"}}'}},response:{status:200,content:{text:JSON.stringify({padding:'x'.repeat(6_000_000),rates:[{price:100}]})}}}]}};
+const fingerprints=await call('discovery/har',har);assert.equal(fingerprints.length,1);assert.equal(fingerprints[0].incomplete,false);assert.ok(fingerprints[0].responseShape['$.rates[*].price']);assert.ok(!JSON.stringify(fingerprints).includes('xxxxxx'));
+const source='class Bot { void Run() { var completeUrl = baseUrl + path; var body = Build(id); HttpPost(completeUrl,body); drRoomType["HotelID"]=id; } string Build(string id)=>id; }\n//'+ 'x'.repeat(300_000);
+const bot=await call('bots',{name:'BATCH04-SMOKE',version:'1.0',files:[{name:'Bot.cs',content:source}]});const deps=await call(`bots/${bot.id}/dependencies`);assert.ok(deps.calls.some(e=>e.to.endsWith(':Build')));assert.ok(deps.outputColumns.some(c=>c.name==='HotelID'));
+const trace={hits:[{sequence:1,method:'GET',path:'/api/ping',status:200,durationMs:10},{sequence:2,method:'POST',path:'/api/hotel/search',status:200,durationMs:50,dependsOnSequence:1}],outputRows:2,outputColumns:['HotelID'],parsingFailed:false};
+const saved=await call(`bots/${bot.id}/runtime`,trace);assert.ok((await call(`bots/${bot.id}/runtime`)).some(x=>x.id===saved.id));await call(`bots/${bot.id}/runtime`,{...trace,hits:[{...trace.hits[0],dependsOnSequence:2}]},400);
+const profile=await call(`bots/${bot.id}/profiles`,{name:'Large HAR baseline',workflow,baseline:fingerprints[0]});assert.ok((await call(`bots/${bot.id}/profiles`)).some(x=>x.id===profile.id));
+console.log('PASS: large HAR, larger source, dependency graph, runtime traces and persistent discovery profiles');
+try{await call('provider/1',{});const capture=await call('discovery/capture',workflow);assert.equal(capture.truncated,false);assert.ok(capture.diagnostics.some(x=>x.includes('preflight')));assert.ok(capture.requests.some(x=>x.operation==='HotelSearchV1'));console.log('PASS: diagnostic browser capture');}finally{await call('provider/1',{});}

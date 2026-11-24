@@ -18,13 +18,13 @@ public sealed class BotRegistry(IWebHostEnvironment env)
     {
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 100 || string.IsNullOrWhiteSpace(input.Version) || input.Version.Length > 50)
             throw new ArgumentException("Bot name and version are required (100 / 50 characters max).");
-        if (input.Files is null || input.Files.Count is < 1 or > 50) throw new ArgumentException("Upload between 1 and 50 C# files.");
-        if (input.Files.Any(f => f is null || string.IsNullOrWhiteSpace(f.Name) || f.Name.Length > 200 || !f.Name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.Content is null || f.Content.Length > 250_000))
-            throw new ArgumentException("Each file must be a .cs source file with at most 250,000 characters.");
+        if (input.Files is null || input.Files.Count is < 1 or > 100) throw new ArgumentException("Upload between 1 and 100 C# files.");
+        if (input.Files.Any(f => f is null || string.IsNullOrWhiteSpace(f.Name) || f.Name.Length > 200 || !f.Name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.Content is null || f.Content.Length > 2_000_000))
+            throw new ArgumentException("Each file must be a .cs source file with at most 2,000,000 characters.");
         var files = input.Files.Select(f => new SourceFile(f.Name.Replace('\\', '/'), f.Content)).OrderBy(f => f.Name, StringComparer.Ordinal).ToArray();
         if (files.Select(f => f.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != files.Length || files.Any(f => f.Name.StartsWith('/') || f.Name.Split('/').Any(p => p is "" or "." or "..") || f.Name.Contains(':') || f.Name.Any(char.IsControl)))
             throw new ArgumentException("Use unique relative source file names; absolute paths are not accepted.");
-        if (files.Sum(f => Encoding.UTF8.GetByteCount(f.Content)) > 1_000_000) throw new ArgumentException("Combined source is limited to 1 MB UTF-8.");
+        if (files.Sum(f => Encoding.UTF8.GetByteCount(f.Content)) > 8_388_608) throw new ArgumentException("Combined source is limited to 8 MiB UTF-8.");
         await gate.WaitAsync(ct);
         try
         {
@@ -62,6 +62,13 @@ public sealed class BotRegistry(IWebHostEnvironment env)
         var path = PathFor(id);
         if (!File.Exists(path)) return null;
         return JsonSerializer.Deserialize<StoredBot>(await File.ReadAllTextAsync(path, ct), Json)?.Snapshot;
+    }
+    public async Task<DependencyReport> DependenciesAsync(Guid id, CancellationToken ct)
+    {
+        var path = PathFor(id);
+        if (!File.Exists(path)) throw new ArgumentException("Source snapshot not found.");
+        var stored = JsonSerializer.Deserialize<StoredBot>(await File.ReadAllTextAsync(path, ct), Json) ?? throw new ArgumentException("Invalid source snapshot.");
+        return DependencyAnalyzer.Analyze(stored.Files);
     }
     private string PathFor(Guid id) => Path.Combine(Root, id.ToString("N") + ".json");
 }

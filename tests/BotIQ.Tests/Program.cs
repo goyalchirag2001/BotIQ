@@ -72,5 +72,22 @@ Check(match.Differences.Any(x => x.Path == "$.data.rates[*].translatedName"), "r
 Check(Discovery.Match(baselineFingerprint, [nextFingerprint, nextFingerprint]).Outcome == "Ambiguous", "tie is not auto-selected");
 Check(Discovery.Match(baselineFingerprint, [ping]).SelectedIndex is null, "weak match rejected");
 Check(Discovery.Match(baselineFingerprint, []).SelectedIndex is null, "empty capture rejected");
-Console.WriteLine("39 assertions passed.");
+var large = Discovery.FingerprintOf(v1 with { ResponseBody = "{\"padding\":\"" + new string('x', 300_000) + "\",\"data\":{\"rate\":1}}" });
+Check(!large.Incomplete && large.ResponseShape.ContainsKey("$.data.rate"), "large JSON beyond previous character limit");
+var oversized = Discovery.FingerprintOf(v1 with { ResponseBody = new string('x', Discovery.MaxBody + 1) });
+Check(oversized.Incomplete, "oversized body marked incomplete");
+Check(Discovery.Match(baselineFingerprint, [nextFingerprint with { Incomplete = true }]).SelectedIndex is null, "incomplete candidate rejected");
+var dependencies = DependencyAnalyzer.Analyze([new("Legacy.cs", """
+class Legacy {
+ void Run() { var completeUrl = baseUrl + path; var strPostData = Build(id); var strResponse = HttpPost(completeUrl,strPostData,headers); var token = Parse(strResponse); drRoomType["HotelID"] = token; }
+ string Build(string id) => id;
+ string Parse(string response) => response;
+}
+""")]);
+Check(dependencies.Methods.Count == 3, "method inventory");
+Check(dependencies.Calls.Any(x => x.To.EndsWith(":Build")), "cross-method candidate edge");
+Check(dependencies.DataLinks.Any(x => x.Kind == "URL construction" && x.Inputs.Contains("baseUrl")), "dynamic URL dependencies");
+Check(dependencies.DataLinks.Any(x => x.Kind == "HTTP invocation" && x.Inputs.Contains("strPostData")), "HTTP argument dependency");
+Check(dependencies.OutputColumns.Any(x => x.Name == "HotelID"), "DataTable output candidate");
+Console.WriteLine("47 assertions passed.");
 static void Check(bool ok,string name){if(!ok)throw new Exception($"FAIL: {name}");Console.WriteLine($"PASS: {name}");}

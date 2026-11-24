@@ -5,10 +5,11 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:5070");
-builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 6_500_000);
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 104_857_600);
 builder.Services.AddSingleton<BotRegistry>();
 builder.Services.AddSingleton<BrowserProbe>();
 builder.Services.AddSingleton<WorkflowDiscovery>();
+builder.Services.AddSingleton<RuntimeRegistry>();
 builder.Services.AddSingleton(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
     { BaseAddress = BrowserProbe.Provider, Timeout = TimeSpan.FromSeconds(15) });
 builder.Services.AddSingleton<InvestigationService>();
@@ -56,16 +57,26 @@ app.MapPost("/api/discovery/compare", async (DiscoveryCompare input, WorkflowDis
     await Run(async () =>
     {
         var baseline = input.Baseline;
-        if (baseline is null || baseline.Path is null || !baseline.Path.StartsWith("/api/", StringComparison.Ordinal) || baseline.Method is not ("GET" or "POST") || baseline.Status is < 200 or >= 300 || baseline.Headers is null || baseline.RequestShape is null || baseline.ResponseShape is null || baseline.RequestShape.Count > 1000 || baseline.ResponseShape.Count > 1000 || baseline.Headers.Count > 2)
+        if (baseline is null || baseline.Path is null || !baseline.Path.StartsWith("/api/", StringComparison.Ordinal) || baseline.Method is not ("GET" or "POST") || baseline.Status is < 200 or >= 300 || baseline.Headers is null || baseline.RequestShape is null || baseline.ResponseShape is null || baseline.Incomplete || baseline.RequestShape.Count > Discovery.MaxShapePaths || baseline.ResponseShape.Count > Discovery.MaxShapePaths || baseline.Headers.Count > 2)
             throw new ArgumentException("Choose a valid successful lab baseline fingerprint.");
         var bot = input.BotId is { } id ? await registry.GetAsync(id, ct) : null;
         if (input.BotId.HasValue && bot is null) throw new ArgumentException("Source snapshot not found.");
         var capture = await discovery.CaptureAsync(input.Workflow, ct);
-        if (capture.Truncated) throw new InvalidOperationException("Capture was incomplete; no match was selected.");
+        if (capture.Truncated) throw new InvalidOperationException("Capture was incomplete; no match was selected. " + string.Join(" ", capture.Diagnostics));
         var match = Discovery.Match(baseline, capture.Requests);
         var impact = bot is null ? null : SourceAnalyzer.MapImpact(bot.Analysis, match.Differences);
         return new { capture, match, impact };
     }));
+app.MapGet("/api/bots/{id:guid}/dependencies", async (Guid id, BotRegistry registry, CancellationToken ct) =>
+    await Run(() => registry.DependenciesAsync(id, ct)));
+app.MapPost("/api/bots/{id:guid}/runtime", async (Guid id, RuntimeTrace trace, RuntimeRegistry runtime, CancellationToken ct) =>
+    await Run(() => runtime.SaveAsync(id, trace, ct)));
+app.MapGet("/api/bots/{id:guid}/runtime", async (Guid id, RuntimeRegistry runtime, CancellationToken ct) =>
+    await Run(() => runtime.ListAsync(id, ct)));
+app.MapPost("/api/bots/{id:guid}/profiles", async (Guid id, DiscoveryProfile profile, RuntimeRegistry runtime, CancellationToken ct) =>
+    await Run(() => runtime.SaveProfileAsync(id, profile, ct)));
+app.MapGet("/api/bots/{id:guid}/profiles", async (Guid id, RuntimeRegistry runtime, CancellationToken ct) =>
+    await Run(() => runtime.ListProfilesAsync(id, ct)));
 app.Run();
 
 static async Task<IResult> Run<T>(Func<Task<T>> action)
@@ -73,7 +84,7 @@ static async Task<IResult> Run<T>(Func<Task<T>> action)
     try { return Results.Ok(await action()); }
     catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
     catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 409); }
-    catch (TimeoutException) { return Results.Problem("Browser capture timed out.", statusCode: 504); }
+    catch (TimeoutException ex) { return Results.Problem(ex.Message, statusCode: 504); }
     catch (HttpRequestException ex) { return Results.Problem($"Demo provider unavailable: {ex.Message}", statusCode: 502); }
     catch (Microsoft.Playwright.PlaywrightException ex) { return Results.Problem($"Browser probe failed: {ex.Message}", statusCode: 502); }
 }
