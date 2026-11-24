@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Demo Hotel Provider</title>
+<style>body{font:16px system-ui;max-width:650px;margin:60px auto;padding:20px}input,button{padding:12px;margin:10px 0}pre{white-space:pre-wrap;background:#f1f5f9;padding:20px}</style>
+<h1>Demo Hotel Provider</h1><p>Synthetic booking search — contract version __VERSION__.</p>
+<label for="property">Property ID</label><input id="property" value="HOTEL-101"><button id="search">Find rates</button><pre id="results" aria-live="polite"></pre>
+<script>
+const version = __VERSION__;
+fetch('/api/ping');
+document.querySelector('#search').addEventListener('click', async () => {
+ const propertyId = document.querySelector('#property').value;
+ const payload = version === 1 ? {operationName:'HotelSearchV1',variables:{hotelId:propertyId,currency:'USD'}} : {operationName:'PropertyAvailability',variables:{propertyId,currency:'USD'}};
+ const response = await fetch(version === 1 ? '/api/hotel/search' : '/api/v2/availability', {method:'POST',headers:{'content-type':'application/json','x-demo-contract':String(version)},body:JSON.stringify(payload)});
+ document.querySelector('#results').textContent = JSON.stringify(await response.json(),null,2);
+});
+</script></html>
