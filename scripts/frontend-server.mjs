@@ -17,7 +17,7 @@ export async function createFrontend({root=defaultRoot,labOnly=false,apiPort=507
   try{
    if(!new Set([`127.0.0.1:${port}`,`localhost:${port}`,`[::1]:${port}`]).has(req.headers.host)){return json(res,403,{detail:'Use the local BotIQ address.'});}
    const url=new URL(req.url,'http://127.0.0.1');const pathname=url.pathname;
-   if(pathname==='/_botiq/health')return json(res,200,{service:'BotIQ.Frontend',mode:labOnly?'lab':'angular',version:'0.5.1'});
+   if(pathname==='/_botiq/health')return json(res,200,{service:'BotIQ.Frontend',mode:labOnly?'lab':'angular',version:'0.5.3'});
    const target=pathname.startsWith('/api/')?pathname+url.search:legacy.get(pathname);
    if(target){
     if(!['GET','HEAD','POST'].includes(req.method))return json(res,405,{detail:'Method not supported'});

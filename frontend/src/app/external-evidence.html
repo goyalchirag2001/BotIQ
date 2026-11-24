@@ -1,0 +1,39 @@
+<section>
+ <div class="section-title"><h2>1 / Load integration evidence</h2><span class="local-tag">LOCAL ANALYSIS</span></div>
+ <p>Files are processed in this Angular tab. They are not sent to the API or stored in investigation history. Use only authorised, sanitised evidence.</p>
+ <label>Target hostname<input [ngModel]="host" (ngModelChange)="changeHost($event)" placeholder="szallas.hu" [disabled]="busy()"></label>
+ <div class="form-grid">
+  <label>First HAR (up to 100 MiB)<input type="file" accept=".har,.json" (change)="selectFile('har',$event)" [disabled]="busy()"></label>
+  <label>C# crawler (optional, up to 8 MiB)<input type="file" accept=".cs" (change)="selectFile('source',$event)" [disabled]="busy()"></label>
+ </div>
+ <label>Second HAR (optional, up to 100 MiB)<input type="file" accept=".har,.json" (change)="selectFile('secondHar',$event)" [disabled]="busy()"></label>
+ <div class="actions"><button class="primary" (click)="analyse()" [disabled]="busy() || !har">{{busy()?'Analysing…':'Analyse evidence'}}</button></div>
+ @if(notice()){<p role="status">{{notice()}}</p>}
+ @if(error()){<p role="alert" class="error">{{error()}}</p>}
+</section>
+@if(first();as inv){
+ <div class="metrics evidence-metrics"><article><small>HAR entries</small><strong>{{inv.total}}</strong></article><article><small>Exact-host requests inspected</small><strong>{{inv.scoped}}</strong></article><article><small>Eligible requests</small><strong>{{inv.entries.length}}</strong></article><article><small>Source call candidates</small><strong>{{hits().length}}</strong></article></div>
+ @if(inv.capped){<p role="status">Inventory capped at 500 eligible entries; counts may be partial.</p>}
+ @if(second();as other){<p>Second HAR: {{other.entries.length}} eligible of {{other.scoped}} exact-host entries inspected. @if(other.capped){Inventory cap reached.}</p>}
+ <section><h2>2 / Source-to-HAR correlation</h2><p>Candidate matches are based on static source patterns and captured paths. Missing hits are not proof of endpoint changes. Compare equivalent workflows and inputs before drawing conclusions.</p>
+ @for(hit of hits();track $index){
+  <div class="hit"><div class="section-title"><h3>{{hit.method}} {{hit.path}}</h3><span class="outcome" [class.missing]="!hit.candidates.length">{{hit.candidates.length?'Candidate evidence':'Not observed'}}</span></div>
+  <p>{{source?.name}} · URL line {{hit.line}} @if(hit.callLine!==null){· HTTP call line {{hit.callLine}}} @if(hit.payload){· payload line {{hit.payload.line}}}</p>
+  <p>{{hit.outcome}}</p>
+  @if(hit.payload;as payload){<details><summary>Source payload field names ({{payload.fields.length}})</summary><pre>{{payload.fields.join(', ')}}</pre></details>}
+  @for(c of hit.candidates;track c.index){<details><summary>#{{c.index}} {{c.method}} {{c.path}} · HTTP {{c.status}}</summary><div class="candidate-grid"><div><small>Source query keys not observed</small><p>{{c.queryDiff.missing.join(', ') || 'None'}}</p><small>Additional captured query keys</small><p>{{c.queryDiff.extra.join(', ') || 'None'}}</p></div><div><small>Source header names not observed</small><p>{{c.headerDiff.missing.join(', ') || 'None'}}</p><small>Additional captured header names</small><p>{{c.headerDiff.extra.join(', ') || 'None'}}</p></div></div><small>Source payload fields not observed</small><p>{{c.sourcePayloadFieldsNotObserved.join(', ') || 'None identified'}}</p><button (click)="inspectCandidate(c.index)">Select for network comparison</button></details>}
+  </div>
+ }@empty{<p>No source call candidates. Select a C# crawler with supported URL/call patterns to correlate it.</p>}
+ </section>
+ <section><h2>3 / Network inventory</h2><p>Includes eligible HTML, JSON, form and redirect evidence. Header names, query keys and schema types are shown, not credential or body values.</p>
+ <label>First capture request<select [ngModel]="left()" (ngModelChange)="selectLeft($event)"><option [ngValue]="null">Select request</option>@for(e of inv.entries;track e.index){<option [ngValue]="e.index">{{entryLabel(e)}}</option>}</select></label>
+ @if(leftEntry();as e){<div class="actions"><span class="local-tag">HTTP {{e.status}}</span><span>{{e.responseKind}}</span><span>{{e.bodyPresent?'Body recorded':'Body unavailable'}}</span></div><details><summary>Inspect request and response structure</summary><pre>{{e|json}}</pre></details>}
+ <label>{{second()?'Second HAR request':'Another request in the first HAR'}}<select [ngModel]="right()" (ngModelChange)="selectRight($event)"><option [ngValue]="null">Select request</option>@for(e of rightEntries();track e.index){<option [ngValue]="e.index">{{entryLabel(e)}}</option>}</select></label>
+ <button class="primary" (click)="compare()" [disabled]="!leftEntry() || !rightEntry()">Compare selected requests</button>
+ </section>
+ @if(difference();as d){<section><h2>4 / Structural comparison</h2><p>{{d.warning}}</p><div class="scroll"><table><thead><tr><th>Contract</th><th>First</th><th>Second</th></tr></thead><tbody><tr><td>Method</td><td>{{d.method[0]}}</td><td>{{d.method[1]}}</td></tr><tr><td>Path</td><td>{{d.path[0]}}</td><td>{{d.path[1]}}</td></tr><tr><td>Status</td><td>{{d.status[0]}}</td><td>{{d.status[1]}}</td></tr><tr><td>Payload kind</td><td>{{d.requestKind[0]}}</td><td>{{d.requestKind[1]}}</td></tr><tr><td>Response kind</td><td>{{d.responseKind[0]}}</td><td>{{d.responseKind[1]}}</td></tr></tbody></table></div>
+ <div class="candidate-grid"><div><h3>Query keys</h3><p>Only first: {{d.query.missing.join(', ') || 'None'}}</p><p>Only second: {{d.query.extra.join(', ') || 'None'}}</p></div><div><h3>Header names</h3><p>Only first: {{d.headers.missing.join(', ') || 'None'}}</p><p>Only second: {{d.headers.extra.join(', ') || 'None'}}</p></div></div>
+ <h3>POST data structure</h3><div class="scroll"><table><thead><tr><th>Field</th><th>First</th><th>Second</th></tr></thead><tbody>@for(f of d.requestFields;track f.field){<tr><td>{{f.field}}</td><td>{{f.before}}</td><td>{{f.after}}</td></tr>}@empty{<tr><td colspan="3">No differences observed in extracted fields.</td></tr>}</tbody></table></div>
+ <h3>Response structure</h3><div class="scroll"><table><thead><tr><th>Field</th><th>First</th><th>Second</th></tr></thead><tbody>@for(f of d.responseFields;track f.field){<tr><td>{{f.field}}</td><td>{{f.before}}</td><td>{{f.after}}</td></tr>}@empty{<tr><td colspan="3">No differences observed in extracted JSON fields.</td></tr>}</tbody></table></div><details><summary>HTML marker differences</summary><p>Only first: {{d.htmlMarkers.missing.join(', ') || 'None'}}</p><p>Only second: {{d.htmlMarkers.extra.join(', ') || 'None'}}</p></details></section>}
+}
+<section><h2>Record external website traffic</h2><p>External live navigation is not connected to the Angular capture button yet. For an authorised read-only workflow, record using your normal browser's DevTools Network tab (Preserve log, export HAR), or the existing approved Playwright recording script. Select that recording as the second HAR above. Do not submit reservations, payment information or personal details.</p><p>The Synthetic browser lab mode is the automated local demo, not a live external browser.</p></section>

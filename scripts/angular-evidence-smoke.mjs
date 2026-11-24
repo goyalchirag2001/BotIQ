@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+const read = p=>fs.readFile(new URL('../'+p,import.meta.url),'utf8');
+const platform=await read('frontend/src/app/platform.ts');
+const component=await read('frontend/src/app/external-evidence.ts');
+const template=await read('frontend/src/app/external-evidence.html');
+assert.match(platform,/imports:\[ExternalEvidencePage,SyntheticDiscoveryPage\]/);
+assert.match(platform,/mode=signal<'external'\|'synthetic'>\('external'\)/);
+assert.match(platform,/<botiq-external-evidence\s*\/>/);
+assert.match(platform,/mode\(\) === 'synthetic'/);
+assert.match(component,/from '\.\.\/\.\.\/\.\.\/src\/BotIQ\.Api\/wwwroot\/evidence-engine\.js'/);
+assert(!component.includes('this.api.har'));
+assert.match(template,/\(click\)="analyse\(\)"/);
+assert.match(template,/\(click\)="compare\(\)"/);
+assert.match(template,/Second HAR/);
+const code=await read('src/BotIQ.Api/wwwroot/evidence-engine.js');
+const {inventory,compareSource,compareEntries}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const entry=(url,method,mime,text,postData,status=200)=>({request:{url,method,headers:[{name:'Authorization',value:'DO_NOT_EXPOSE'}],postData},response:{status,content:{mimeType:mime,text}}});
+const har={log:{entries:[entry('https://example.com/hotel-1?checkin=PRIVATE','GET','text/html','<script>var a={"rooms":[{"roomName":"private"}]}</script>'),entry('https://example.com/api/summary','POST','application/json','{"priceData":{"total":12}}',{mimeType:'application/json',text:'{"hotelId":123}'}),entry('https://other.example/api/summary','GET','application/json','{"private":true}')]}};
+const inv=inventory(har,'example.com');assert.equal(inv.entries.length,2);assert(inv.entries[0].responseMarkers.includes('rooms'));assert.equal(inv.entries[1].responseFields['$.priceData.total'],'number');assert(!JSON.stringify(inv).includes('DO_NOT_EXPOSE'));assert(!JSON.stringify(inv).includes('PRIVATE'));
+const src='string completeUrl = $"https://example.com/{hotelName}?checkin={date}";\nstrResponse = this.tlsResponse(completeUrl, WebRequestMethods.Http.Get, null, null, headers, proxy);\nstring api = "https://example.com/api/missing";\nthis.tlsResponse(api, WebRequestMethods.Http.Post, null, PostData, headers, proxy);';
+const report=compareSource(src,inv);assert.equal(report.length,2);assert.equal(report[0].candidates[0].index,0);assert.equal(report[1].outcome,'Not observed in selected HAR');assert.equal(compareEntries(inv.entries[0],inv.entries[1]).requestKind[1],'json');
+console.log('PASS: Angular route wiring (static), external evidence engine, HTML/JSON, source correlation, missing hits and value exclusion.');
+if(process.argv.length>=5){const [harPath,sourcePath,host]=process.argv.slice(2);const inv=inventory(JSON.parse((await fs.readFile(harPath,'utf8')).replace(/^\uFEFF/,'')),host);const report=compareSource(await fs.readFile(sourcePath,'utf8'),inv);console.log(`${inv.total} total; ${inv.scoped} scoped; ${inv.entries.length} eligible; ${report.length} source call candidates`);for(const hit of report)console.log(`${hit.method} ${hit.path} at line ${hit.line}: ${hit.outcome}`);}
