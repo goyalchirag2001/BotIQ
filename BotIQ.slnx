@@ -1,4 +1,4 @@
 <Solution>
-  <Folder Name="/src/"><Project Path="src/BotIQ.Core/BotIQ.Core.csproj"/><Project Path="src/BotIQ.SampleBot/BotIQ.SampleBot.csproj"/><Project Path="src/BotIQ.Api/BotIQ.Api.csproj"/></Folder>
+  <Folder Name="/src/"><Project Path="src/BotIQ.Core/BotIQ.Core.csproj"/><Project Path="src/BotIQ.CodeIntelligence/BotIQ.CodeIntelligence.csproj"/><Project Path="src/BotIQ.SampleBot/BotIQ.SampleBot.csproj"/><Project Path="src/BotIQ.Api/BotIQ.Api.csproj"/></Folder>
   <Folder Name="/tests/"><Project Path="tests/BotIQ.Tests/BotIQ.Tests.csproj"/></Folder>
 </Solution>

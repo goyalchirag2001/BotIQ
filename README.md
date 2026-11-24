@@ -1,6 +1,10 @@
 # BotIQ — Autonomous Integration Intelligence
 
-**v0.1 / local proof of concept**. A developer-infrastructure project that detects breaking provider contracts by comparing a known-good baseline, an existing C# bot, and independently captured browser traffic. All data and endpoints are synthetic. No employer assets, credentials, real provider data or production connectivity are included.
+**v0.2 / local proof of concept**. A developer-infrastructure project that detects breaking provider contracts by comparing a known-good baseline, an existing C# bot, and independently captured browser traffic. All data and endpoints are synthetic. No employer assets, credentials, real provider data or production connectivity are included.
+
+## Batch 02
+
+Versioned bot source registration, Roslyn syntax analysis and candidate source-impact mapping are now included. See [Batch 02 instructions](docs/BATCH-02.md). The sections below describe the original v0.1 lab; its endpoints and workflow remain available.
 
 ## First milestone
 
@@ -55,7 +59,7 @@ node tests/provider_smoke.mjs
 node scripts/api-smoke.mjs
 ```
 
-The first command runs 13 dependency-free C# assertions. The second runs the full API workflow and resets the mock provider to v1. An independent browser/provider smoke test is also included (stop any running provider first):
+The first command runs 29 C# assertions (including Roslyn analysis). The second tests the provider HTTP contract; the third runs the full API workflow and resets the mock provider to v1. An independent browser/provider smoke test is also included (stop any running provider first):
 
 ```sh
 python -m pip install playwright
@@ -92,11 +96,11 @@ docs/ROADMAP.md
 | POST | /api/baseline | Capture healthy baseline |
 | POST | /api/investigate | Three-way comparison |
 
-POST requests require `X-BotIQ-Lab: 1`. Both services bind loopback only. The baseline file is overwritten when recaptured. There is no authentication, multi-tenancy, queue, source analysis, arbitrary bot upload, AI or automatic patching in this milestone. Do not expose these services publicly or use them with confidential data. The demo only captures allowlisted synthetic request headers; body retention is local and unredacted because all data are synthetic. A production capture design needs redaction, retention controls and security reviews first.
+POST requests require `X-BotIQ-Lab: 1`. Both services bind loopback only. The baseline file is overwritten when recaptured. There is no authentication, multi-tenancy, queue, arbitrary uploaded bot execution, AI or automatic patching. v0.2 adds static C# source registration and analysis. Do not expose these services publicly or use them with confidential data. The demo only captures allowlisted synthetic request headers; body retention is local and unredacted because all data are synthetic. A production capture design needs redaction, retention controls and security reviews first.
 
 ## Verification status
 
-The provided environment had Node.js and Chromium but no .NET SDK and no access to NuGet restore. The Node provider HTTP smoke test passed (both versions, invalid contract rejection and null response). The independent real-browser smoke test was attempted but blocked by the environment’s Chromium policy (`ERR_BLOCKED_BY_ADMINISTRATOR` on loopback navigation). The .NET build, 13 C# assertions, real-browser smoke test and end-to-end .NET API test must still be executed locally or in CI. The UI is not an Angular app yet. Root cause messages refer to known demo methods rather than Roslyn-derived locations. No GitHub repository has been created or modified.
+The provided environment had Node.js and Chromium but no .NET SDK and no access to NuGet restore. The Node provider HTTP smoke test passed (both versions, invalid contract rejection and null response). The independent real-browser smoke test was attempted but blocked by the environment’s Chromium policy (`ERR_BLOCKED_BY_ADMINISTRATOR` on loopback navigation). The v0.1 build succeeded on the user’s machine. The v0.2 .NET build, 29 C# assertions, registry smoke test and real-browser end-to-end tests must still be executed locally or in CI. The UI is not an Angular app yet. Original root cause messages refer to known demo methods; selecting a source snapshot in v0.2 additionally displays Roslyn-derived candidate locations. No GitHub repository has been created or modified.
 
 ## References
 
