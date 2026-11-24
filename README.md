@@ -114,3 +114,6 @@ The provided environment had Node.js and Chromium but no .NET SDK and no access 
 ## Batch 04
 
 See [Batch 04 — advanced intelligence and browser reliability](docs/BATCH-04.md). Both provider and API must be restarted after updating. Browser capture now has configurable timeouts and stage diagnostics; HAR and source limits have increased. The local Advanced intelligence page is `/intelligence.html`.
+
+## Batch 05 — Angular and investigation history
+See [Batch 05 instructions](docs/BATCH-05.md) for the Chromium navigation changes, stage diagnostics, Angular 22 workspace at port 4200, optional PostgreSQL investigation-history storage, and regression tests. Existing lab pages remain available at port 5070. All browser targets remain synthetic/local.

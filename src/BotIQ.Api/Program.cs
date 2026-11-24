@@ -2,6 +2,7 @@ using BotIQ.Api;
 using BotIQ.CodeIntelligence;
 using BotIQ.Core;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:5070");
@@ -10,10 +11,15 @@ builder.Services.AddSingleton<BotRegistry>();
 builder.Services.AddSingleton<BrowserProbe>();
 builder.Services.AddSingleton<WorkflowDiscovery>();
 builder.Services.AddSingleton<RuntimeRegistry>();
-builder.Services.AddSingleton(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+builder.Services.AddSingleton(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false })
     { BaseAddress = BrowserProbe.Provider, Timeout = TimeSpan.FromSeconds(15) });
 builder.Services.AddSingleton<InvestigationService>();
+var connection = builder.Configuration.GetConnectionString("BotIQ");
+if (!string.IsNullOrWhiteSpace(connection)) builder.Services.AddDbContext<HistoryDb>(options => options.UseNpgsql(connection));
+builder.Services.AddSingleton<InvestigationHistory>();
 var app = builder.Build();
+var history = app.Services.GetRequiredService<InvestigationHistory>();
+await history.InitializeAsync(CancellationToken.None);
 app.Use(async (context, next) =>
 {
     // The unauthenticated lab is local-only; reject cross-origin mutation attempts.
@@ -30,21 +36,22 @@ app.MapPost("/api/provider/{version:int}", async (int version, InvestigationServ
     await Run(async () => { await svc.SetVersionAsync(version, ct); return new { version }; }));
 app.MapPost("/api/baseline", async (InvestigationService svc, CancellationToken ct) =>
     await Run(() => svc.CaptureBaselineAsync(ct)));
-app.MapPost("/api/investigate", async (InvestigationService svc, CancellationToken ct) =>
-    await Run(() => svc.InvestigateAsync(ct)));
+app.MapPost("/api/investigate", async (InvestigationService svc, InvestigationHistory historyStore, CancellationToken ct) =>
+    await Run(async () => { var report = await svc.InvestigateAsync(ct); await historyStore.RecordDemoAsync(report, null, ct); return report; }));
 app.MapGet("/api/bots", async (BotRegistry registry, CancellationToken ct) => Results.Ok(await registry.ListAsync(ct)));
 app.MapGet("/api/bots/{id:guid}", async (Guid id, BotRegistry registry, CancellationToken ct) =>
     await registry.GetAsync(id, ct) is { } bot ? Results.Ok(bot) : Results.NotFound());
 app.MapPost("/api/bots", async (RegisterBot input, BotRegistry registry, CancellationToken ct) =>
     await Run(() => registry.RegisterAsync(input, ct)));
 // The live probe still executes ONLY the compiled synthetic sample, not uploaded source.
-app.MapPost("/api/bots/{id:guid}/demo-investigation", async (Guid id, BotRegistry registry, InvestigationService svc, CancellationToken ct) =>
+app.MapPost("/api/bots/{id:guid}/demo-investigation", async (Guid id, BotRegistry registry, InvestigationService svc, InvestigationHistory historyStore, CancellationToken ct) =>
 {
     var bot = await registry.GetAsync(id, ct);
     if (bot is null) return Results.NotFound();
     return await Run(async () =>
     {
         var investigation = await svc.InvestigateAsync(ct);
+        await historyStore.RecordDemoAsync(investigation, id, ct);
         var impact = SourceAnalyzer.MapImpact(bot.Analysis, investigation.HistoricalVsLive);
         return new { investigation, sourceSnapshot = new { bot.Id, bot.Name, bot.Version, bot.SourceHash }, impact };
     });
@@ -53,7 +60,7 @@ app.MapPost("/api/discovery/capture", async (BrowserWorkflow workflow, WorkflowD
     await Run(() => discovery.CaptureAsync(workflow, ct)));
 app.MapPost("/api/discovery/har", (JsonElement har) =>
     Run(() => Task.FromResult(WorkflowDiscovery.ImportHar(har))));
-app.MapPost("/api/discovery/compare", async (DiscoveryCompare input, WorkflowDiscovery discovery, BotRegistry registry, CancellationToken ct) =>
+app.MapPost("/api/discovery/compare", async (DiscoveryCompare input, WorkflowDiscovery discovery, BotRegistry registry, InvestigationHistory historyStore, CancellationToken ct) =>
     await Run(async () =>
     {
         var baseline = input.Baseline;
@@ -65,6 +72,7 @@ app.MapPost("/api/discovery/compare", async (DiscoveryCompare input, WorkflowDis
         if (capture.Truncated) throw new InvalidOperationException("Capture was incomplete; no match was selected. " + string.Join(" ", capture.Diagnostics));
         var match = Discovery.Match(baseline, capture.Requests);
         var impact = bot is null ? null : SourceAnalyzer.MapImpact(bot.Analysis, match.Differences);
+        await historyStore.RecordDiscoveryAsync(match, input.BotId, ct);
         return new { capture, match, impact };
     }));
 app.MapGet("/api/bots/{id:guid}/dependencies", async (Guid id, BotRegistry registry, CancellationToken ct) =>
@@ -77,6 +85,9 @@ app.MapPost("/api/bots/{id:guid}/profiles", async (Guid id, DiscoveryProfile pro
     await Run(() => runtime.SaveProfileAsync(id, profile, ct)));
 app.MapGet("/api/bots/{id:guid}/profiles", async (Guid id, RuntimeRegistry runtime, CancellationToken ct) =>
     await Run(() => runtime.ListProfilesAsync(id, ct)));
+app.MapGet("/api/history", async (int? limit, Guid? botId, InvestigationHistory historyStore, CancellationToken ct) =>
+    await Run(() => historyStore.ListAsync(limit ?? 50, botId, ct)));
+app.MapGet("/api/platform", (InvestigationHistory historyStore) => Results.Ok(new { version = "0.5.0", historyStorage = historyStore.UsesPostgres ? "PostgreSQL" : "Local files", providerUrl = BrowserProbe.Provider.AbsoluteUri }));
 app.Run();
 
 static async Task<IResult> Run<T>(Func<Task<T>> action)

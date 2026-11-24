@@ -6,7 +6,7 @@ namespace BotIQ.Api;
 
 public sealed record RawCapture(IReadOnlyList<Exchange> Exchanges, bool Truncated, IReadOnlyList<string> Diagnostics);
 
-public sealed class BrowserProbe
+public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
 {
     public static readonly Uri Provider = new("http://127.0.0.1:5071/");
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -26,6 +26,8 @@ public sealed class BrowserProbe
         var stage = "provider preflight";
         var watch = Stopwatch.StartNew();
         var notes = new List<string>();
+        void Stage(string name) { stage = name; logger.LogInformation("Browser capture: {Stage} ({Elapsed} ms)", name, watch.ElapsedMilliseconds); }
+        Stage(stage);
         var timeout = int.TryParse(Environment.GetEnvironmentVariable("BOTIQ_BROWSER_TIMEOUT_MS"), out var configured) ? Math.Clamp(configured, 15000, 120000) : 60000;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMilliseconds(timeout * 3L));
@@ -36,24 +38,37 @@ public sealed class BrowserProbe
             {
                 using var result = await http.GetAsync(new Uri(Provider, "/api/state"), token);
                 if (!result.IsSuccessStatusCode) throw new HttpRequestException($"Provider state returned HTTP {(int)result.StatusCode}.");
+                using var root = await http.GetAsync(Provider, token);
+                root.EnsureSuccessStatusCode();
+                if (!(await root.Content.ReadAsStringAsync(token)).Contains("id=\"property\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Port 5071 is not serving the expected synthetic provider page.");
             }
             notes.Add("Provider preflight succeeded.");
-            stage = "Playwright initialization";
-            using var playwright = await Playwright.CreateAsync();
+            Stage("Playwright initialization");
+            using var playwright = await Playwright.CreateAsync().WaitAsync(token);
             token.ThrowIfCancellationRequested();
-            stage = "Chromium launch";
-            await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = Environment.GetEnvironmentVariable("BOTIQ_BROWSER_HEADLESS") != "0", Timeout = timeout, Args = ["--no-proxy-server"] });
-            stage = "browser context setup";
-            await using var context = await browser.NewContextAsync(new() { ServiceWorkers = ServiceWorkerPolicy.Block });
-            // Keep the lab isolated. No external origins, arbitrary navigation or administrative routes.
-            await context.RouteAsync("**/*", route =>
+            var headless = Environment.GetEnvironmentVariable("BOTIQ_BROWSER_HEADLESS") != "0";
+            var channel = Environment.GetEnvironmentVariable("BOTIQ_BROWSER_CHANNEL");
+            if (channel is not (null or "" or "chromium" or "chrome" or "msedge"))
+                throw new ArgumentException("BOTIQ_BROWSER_CHANNEL must be chromium, chrome or msedge (or unset).");
+            Stage("Chromium launch and isolated context setup");
+            // Empty user-data directory asks Playwright for a temporary profile. Reuse its startup tab.
+            await using var context = await playwright.Chromium.LaunchPersistentContextAsync("", new()
             {
-                if (!WorkflowDiscovery.Allowed(route.Request.Url)) return route.AbortAsync();
-                var path = new Uri(route.Request.Url).AbsolutePath;
-                return (path == "/" && route.Request.Method == "GET") || WorkflowDiscovery.AllowedRequest(route.Request.Url, route.Request.Method)
-                    ? route.ContinueAsync() : route.AbortAsync();
+                Headless = headless, Timeout = timeout, Channel = string.IsNullOrEmpty(channel) ? null : channel,
+                ServiceWorkers = ServiceWorkerPolicy.Block, Args = ["--no-proxy-server"]
             });
-            var page = await context.NewPageAsync();
+            Stage("selecting initial browser tab");
+            var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync().WaitAsync(TimeSpan.FromMilliseconds(timeout), token);
+            Stage("installing restricted network guard");
+            // Let approved local lab URLs travel directly through Chromium's network stack.
+            // Intercept ONLY forbidden URLs; no continuation callback can stall the main document.
+            await context.RouteAsync(url => !WorkflowDiscovery.Allowed(url) ||
+                (new Uri(url).AbsolutePath != "/" && !new Uri(url).AbsolutePath.StartsWith("/api/", StringComparison.Ordinal)),
+                async route => { try { await route.AbortAsync(); } catch (PlaywrightException) { } })
+                .WaitAsync(TimeSpan.FromMilliseconds(timeout), token);
+            page.FrameNavigated += (_, frame) => { if (frame == page.MainFrame) logger.LogInformation("Browser main frame navigated: {Url}", WorkflowDiscovery.Allowed(frame.Url) ? frame.Url : "non-lab URL"); };
+            page.Request += (_, request) => { if (WorkflowDiscovery.Allowed(request.Url)) logger.LogInformation("Browser request: {Method} {Path}", request.Method, new Uri(request.Url).AbsolutePath); };
             page.SetDefaultTimeout(timeout);
             page.SetDefaultNavigationTimeout(timeout);
             var responses = new List<IResponse>();
@@ -69,14 +84,18 @@ public sealed class BrowserProbe
                 if (WorkflowDiscovery.AllowedRequest(request.Url, request.Method)) lock (failures) { if (failures.Count < 10) failures.Add($"Failed request: {request.Method} {new Uri(request.Url).AbsolutePath}"); }
             };
             page.PageError += (_, _) => { lock (failures) { if (failures.Count < 10) failures.Add("Provider page reported a JavaScript error."); } };
-            stage = "navigation to local provider";
+            Stage($"navigation to local provider {Provider.AbsoluteUri}");
             var navigation = await page.GotoAsync(Provider.AbsoluteUri, new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = timeout }).WaitAsync(token);
             if (navigation is null || !navigation.Ok) throw new HttpRequestException($"Provider navigation returned HTTP {navigation?.Status}.");
-            notes.Add("Chromium navigation succeeded.");
+            if (!WorkflowDiscovery.Allowed(page.Url)) throw new InvalidOperationException("Browser navigated outside the lab origin.");
+            Stage("verifying provider controls");
+            await page.Locator("#property").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = timeout }).WaitAsync(token);
+            if (!headless) await page.BringToFrontAsync().WaitAsync(TimeSpan.FromMilliseconds(timeout), token);
+            notes.Add($"Chromium navigation succeeded: {page.Url}");
             foreach (var step in workflow.Steps)
             {
                 token.ThrowIfCancellationRequested();
-                stage = $"workflow {step.Action} {step.Selector}";
+                Stage($"workflow {step.Action} {step.Selector}");
                 var locator = page.Locator(step.Selector);
                 switch (step.Action)
                 {
@@ -89,7 +108,7 @@ public sealed class BrowserProbe
                         break;
                 }
             }
-            stage = "reading captured response bodies";
+            Stage("reading captured response bodies");
             IResponse[] snapshot; lock (responses) snapshot = responses.ToArray();
             var exchanges = new List<Exchange>();
             long totalChars = 0;
@@ -114,9 +133,10 @@ public sealed class BrowserProbe
             lock (failures) { notes.AddRange(failures); if (failures.Count > 0) truncated = true; }
             if (!exchanges.Any(e => e.Method == "POST")) throw new InvalidOperationException("Browser completed but no search POST was captured. Check the provider page and restart both updated servers.");
             notes.Add($"Captured {exchanges.Count} responses in {watch.ElapsedMilliseconds} ms.");
+            Stage("capture completed");
             return new(exchanges, truncated, notes);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new System.TimeoutException($"Browser capture timed out during {stage} after {watch.ElapsedMilliseconds} ms. Check provider and Chromium; see Batch 04 troubleshooting."); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new System.TimeoutException($"Browser capture timed out during {stage} after {watch.ElapsedMilliseconds} ms. Check provider and Chromium; see Batch 05 troubleshooting."); }
         catch (System.TimeoutException ex) { throw new System.TimeoutException($"Browser capture timed out during {stage} after {watch.ElapsedMilliseconds} ms. {ex.Message.Split('\n')[0]}", ex); }
         catch (PlaywrightException ex) { throw new InvalidOperationException($"Browser capture failed during {stage}: {ex.Message.Split('\n')[0]}. Check Chromium installation and provider availability.", ex); }
         finally { gate.Release(); }

@@ -15,6 +15,7 @@ async function body(req) {
 const server = http.createServer(async (req,res) => {
   try {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
+    if (process.env.BOTIQ_PROVIDER_LOG === '1') console.log(`[provider] ${req.method} ${path}`);
     if (req.method === 'GET' && path === '/') {
       res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'no-store'});
       return res.end(html.replaceAll('__VERSION__', String(version)));

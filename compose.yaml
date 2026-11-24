@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: botiq
+      POSTGRES_USER: botiq
+      POSTGRES_PASSWORD: ${BOTIQ_DB_PASSWORD:?Set BOTIQ_DB_PASSWORD first}
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - botiq_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U botiq -d botiq']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  botiq_pgdata:
