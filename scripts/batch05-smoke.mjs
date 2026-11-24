@@ -4,7 +4,7 @@ const root='http://127.0.0.1:5070/api/';
 const workflow={name:'Batch 05 navigation smoke',steps:[{action:'fill',selector:'#property',value:'HOTEL-101'},{action:'click',selector:'#search'},{action:'wait',selector:'#results:not(:empty)'}]};
 async function get(path){const r=await fetch(root+path);const x=await r.json();assert.equal(r.status,200,JSON.stringify(x));return x;}
 async function post(path,body){const r=await fetch(root+path,{method:'POST',headers:{'X-BotIQ-Lab':'1','content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const x=await r.json();assert.equal(r.status,200,JSON.stringify(x));return x;}
-const platform=await get('platform');assert.equal(platform.version,'0.5.0');console.log('History storage:',platform.historyStorage);
+const platform=await get('platform');assert.match(platform.version,/^0\.5\.[01]$/);console.log('History storage:',platform.historyStorage);
 if(process.argv.includes('--history-only')){const h=await get('history?limit=1');assert.equal(h.length,1,'No history: first run full smoke, then restart with same storage');console.log('PASS: persisted history',h[0].id);process.exit(0);}
 const previous=await get('history?limit=100');
 try{

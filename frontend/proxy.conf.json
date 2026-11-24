@@ -1,1 +1,27 @@
-{"/api/**":{"target":"http://127.0.0.1:5070","secure":false,"changeOrigin":false}}
+{
+  "/api/**": {
+    "target": "http://127.0.0.1:5070",
+    "secure": false,
+    "changeOrigin": false
+  },
+  "/lab": {
+    "target": "http://127.0.0.1:5070",
+    "secure": false,
+    "changeOrigin": false
+  },
+  "/bots.html": {
+    "target": "http://127.0.0.1:5070",
+    "secure": false,
+    "changeOrigin": false
+  },
+  "/discovery.html": {
+    "target": "http://127.0.0.1:5070",
+    "secure": false,
+    "changeOrigin": false
+  },
+  "/intelligence.html": {
+    "target": "http://127.0.0.1:5070",
+    "secure": false,
+    "changeOrigin": false
+  }
+}

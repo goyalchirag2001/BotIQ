@@ -1,3 +1,7 @@
+# BotIQ v0.5.1 stabilization
+
+**Current startup instructions:** [Batch 05 hotfix](docs/BATCH-05-HOTFIX.md). Run `node scripts/start-local.mjs` from the repository root. The older commands below are retained for development history and are superseded by the hotfix.
+
 # BotIQ — Autonomous Integration Intelligence
 
 **v0.3 / local proof of concept**. A developer-infrastructure project that detects breaking provider contracts by comparing a known-good baseline, an existing C# bot, and independently captured browser traffic. All data and endpoints are synthetic. No employer assets, credentials, real provider data or production connectivity are included.

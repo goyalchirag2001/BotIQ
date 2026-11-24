@@ -30,6 +30,9 @@ app.Use(async (context, next) =>
 });
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/api/discovery/progress", (BrowserProbe probe) => Results.Ok(probe.Progress));
+app.MapGet("/api/health", () => Results.Ok(new { service = "BotIQ.Api", version = "0.5.1" }));
+app.MapGet("/lab", (IWebHostEnvironment env) => Results.File(Path.Combine(env.WebRootPath, "index.html"), "text/html; charset=utf-8"));
 app.MapGet("/api/state", async (InvestigationService svc, CancellationToken ct) =>
     Results.Ok(new { version = await svc.VersionAsync(ct), baseline = await svc.GetBaselineAsync(ct) }));
 app.MapPost("/api/provider/{version:int}", async (int version, InvestigationService svc, CancellationToken ct) =>
@@ -87,7 +90,7 @@ app.MapGet("/api/bots/{id:guid}/profiles", async (Guid id, RuntimeRegistry runti
     await Run(() => runtime.ListProfilesAsync(id, ct)));
 app.MapGet("/api/history", async (int? limit, Guid? botId, InvestigationHistory historyStore, CancellationToken ct) =>
     await Run(() => historyStore.ListAsync(limit ?? 50, botId, ct)));
-app.MapGet("/api/platform", (InvestigationHistory historyStore) => Results.Ok(new { version = "0.5.0", historyStorage = historyStore.UsesPostgres ? "PostgreSQL" : "Local files", providerUrl = BrowserProbe.Provider.AbsoluteUri }));
+app.MapGet("/api/platform", (InvestigationHistory historyStore) => Results.Ok(new { version = "0.5.1", historyStorage = historyStore.UsesPostgres ? "PostgreSQL" : "Local files", providerUrl = BrowserProbe.Provider.AbsoluteUri }));
 app.Run();
 
 static async Task<IResult> Run<T>(Func<Task<T>> action)

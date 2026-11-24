@@ -4,12 +4,16 @@ using System.Diagnostics;
 
 namespace BotIQ.Api;
 
+public sealed record BrowserProgress(string Stage, bool Running, long ElapsedMs, string? Error = null);
+
 public sealed record RawCapture(IReadOnlyList<Exchange> Exchanges, bool Truncated, IReadOnlyList<string> Diagnostics);
 
 public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
 {
     public static readonly Uri Provider = new("http://127.0.0.1:5071/");
     private readonly SemaphoreSlim gate = new(1, 1);
+    private BrowserProgress progress = new("Idle", false, 0);
+    public BrowserProgress Progress => Volatile.Read(ref progress);
 
     public async Task<Exchange> CaptureAsync(Scenario scenario, CancellationToken ct = default)
     {
@@ -26,7 +30,7 @@ public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
         var stage = "provider preflight";
         var watch = Stopwatch.StartNew();
         var notes = new List<string>();
-        void Stage(string name) { stage = name; logger.LogInformation("Browser capture: {Stage} ({Elapsed} ms)", name, watch.ElapsedMilliseconds); }
+        void Stage(string name) { stage = name; Volatile.Write(ref progress, new BrowserProgress(name, true, watch.ElapsedMilliseconds)); logger.LogInformation("Browser capture: {Stage} ({Elapsed} ms)", name, watch.ElapsedMilliseconds); }
         Stage(stage);
         var timeout = int.TryParse(Environment.GetEnvironmentVariable("BOTIQ_BROWSER_TIMEOUT_MS"), out var configured) ? Math.Clamp(configured, 15000, 120000) : 60000;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -59,6 +63,7 @@ public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
                 ServiceWorkers = ServiceWorkerPolicy.Block, Args = ["--no-proxy-server"]
             });
             Stage("selecting initial browser tab");
+            logger.LogInformation("Chromium launched with {Count} startup pages", context.Pages.Count);
             var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync().WaitAsync(TimeSpan.FromMilliseconds(timeout), token);
             Stage("installing restricted network guard");
             // Let approved local lab URLs travel directly through Chromium's network stack.
@@ -85,6 +90,7 @@ public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
             };
             page.PageError += (_, _) => { lock (failures) { if (failures.Count < 10) failures.Add("Provider page reported a JavaScript error."); } };
             Stage($"navigation to local provider {Provider.AbsoluteUri}");
+            logger.LogInformation("Navigating from {Url}", WorkflowDiscovery.Allowed(page.Url) ? page.Url : "startup tab");
             var navigation = await page.GotoAsync(Provider.AbsoluteUri, new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = timeout }).WaitAsync(token);
             if (navigation is null || !navigation.Ok) throw new HttpRequestException($"Provider navigation returned HTTP {navigation?.Status}.");
             if (!WorkflowDiscovery.Allowed(page.Url)) throw new InvalidOperationException("Browser navigated outside the lab origin.");
@@ -134,11 +140,15 @@ public sealed class BrowserProbe(ILogger<BrowserProbe> logger)
             if (!exchanges.Any(e => e.Method == "POST")) throw new InvalidOperationException("Browser completed but no search POST was captured. Check the provider page and restart both updated servers.");
             notes.Add($"Captured {exchanges.Count} responses in {watch.ElapsedMilliseconds} ms.");
             Stage("capture completed");
+            Volatile.Write(ref progress, new BrowserProgress(stage, false, watch.ElapsedMilliseconds));
             return new(exchanges, truncated, notes);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new System.TimeoutException($"Browser capture timed out during {stage} after {watch.ElapsedMilliseconds} ms. Check provider and Chromium; see Batch 05 troubleshooting."); }
         catch (System.TimeoutException ex) { throw new System.TimeoutException($"Browser capture timed out during {stage} after {watch.ElapsedMilliseconds} ms. {ex.Message.Split('\n')[0]}", ex); }
         catch (PlaywrightException ex) { throw new InvalidOperationException($"Browser capture failed during {stage}: {ex.Message.Split('\n')[0]}. Check Chromium installation and provider availability.", ex); }
-        finally { gate.Release(); }
+        finally {
+            if (Progress.Running) Volatile.Write(ref progress, new BrowserProgress(stage, false, watch.ElapsedMilliseconds, "Capture ended before completion. Check the API response and terminal logs."));
+            gate.Release();
+        }
     }
 }
