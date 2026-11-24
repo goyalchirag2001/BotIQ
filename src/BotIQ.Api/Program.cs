@@ -31,7 +31,7 @@ app.Use(async (context, next) =>
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapGet("/api/discovery/progress", (BrowserProbe probe) => Results.Ok(probe.Progress));
-app.MapGet("/api/health", () => Results.Ok(new { service = "BotIQ.Api", version = "0.5.1" }));
+app.MapGet("/api/health", () => Results.Ok(new { service = "BotIQ.Api", version = "0.5.4" }));
 app.MapGet("/lab", (IWebHostEnvironment env) => Results.File(Path.Combine(env.WebRootPath, "index.html"), "text/html; charset=utf-8"));
 app.MapGet("/api/state", async (InvestigationService svc, CancellationToken ct) =>
     Results.Ok(new { version = await svc.VersionAsync(ct), baseline = await svc.GetBaselineAsync(ct) }));
@@ -88,9 +88,19 @@ app.MapPost("/api/bots/{id:guid}/profiles", async (Guid id, DiscoveryProfile pro
     await Run(() => runtime.SaveProfileAsync(id, profile, ct)));
 app.MapGet("/api/bots/{id:guid}/profiles", async (Guid id, RuntimeRegistry runtime, CancellationToken ct) =>
     await Run(() => runtime.ListProfilesAsync(id, ct)));
+app.MapPost("/api/history/external", (ExternalReviewSummary input, BotRegistry registry, InvestigationHistory store, CancellationToken ct) =>
+    Run(async () =>
+    {
+        if (input.Matched is < 0 or > 100 || input.Ambiguous is < 0 or > 100 || input.Missing is < 0 or > 100 || input.Matched + input.Ambiguous + input.Missing > 100 || input.Differences is < 0 or > 10_000_000 || input.SourceHits is < 0 or > 10000 || (!input.HasSecond && (input.Matched + input.Ambiguous + input.Missing + input.Differences != 0)))
+            throw new ArgumentException("Invalid external review counts.");
+        if (input.BotId is { } id && await registry.GetAsync(id, ct) is null) throw new ArgumentException("Bot snapshot not found.");
+        var entry = new HistoryEntry { BotId = input.BotId, Kind = "external", Outcome = input.HasSecond ? "Candidate evidence review" : "Single capture review", DifferenceCount = input.Differences, Details = $"Source hits: {input.SourceHits}; candidate matches: {input.Matched}; ambiguous: {input.Ambiguous}; not observed: {input.Missing}" };
+        await store.SaveAsync(entry, ct);
+        return new { entry.Id };
+    }));
 app.MapGet("/api/history", async (int? limit, Guid? botId, InvestigationHistory historyStore, CancellationToken ct) =>
     await Run(() => historyStore.ListAsync(limit ?? 50, botId, ct)));
-app.MapGet("/api/platform", (InvestigationHistory historyStore) => Results.Ok(new { version = "0.5.1", historyStorage = historyStore.UsesPostgres ? "PostgreSQL" : "Local files", providerUrl = BrowserProbe.Provider.AbsoluteUri }));
+app.MapGet("/api/platform", (InvestigationHistory historyStore) => Results.Ok(new { version = "0.5.4", historyStorage = historyStore.UsesPostgres ? "PostgreSQL" : "Local files", providerUrl = BrowserProbe.Provider.AbsoluteUri }));
 app.Run();
 
 static async Task<IResult> Run<T>(Func<Task<T>> action)
@@ -102,3 +112,5 @@ static async Task<IResult> Run<T>(Func<Task<T>> action)
     catch (HttpRequestException ex) { return Results.Problem($"Demo provider unavailable: {ex.Message}", statusCode: 502); }
     catch (Microsoft.Playwright.PlaywrightException ex) { return Results.Problem($"Browser probe failed: {ex.Message}", statusCode: 502); }
 }
+
+public sealed record ExternalReviewSummary(Guid? BotId, int Matched, int Ambiguous, int Missing, int Differences, int SourceHits, bool HasSecond);

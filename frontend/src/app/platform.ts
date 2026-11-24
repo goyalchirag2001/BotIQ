@@ -8,7 +8,7 @@ import { Api, Bot, Capture, Comparison, Fingerprint, History, Platform, Workflow
 @Component({selector:'app-root',imports:[RouterOutlet,RouterLink,RouterLinkActive],template:`
 <div class="shell"><aside><div class="brand"><b>Bot<span>IQ</span></b><small>Integration intelligence</small></div><nav>
 <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact:true}">Overview</a><a routerLink="/bots" routerLinkActive="active">Bot registry</a><a routerLink="/discovery" routerLinkActive="active">Discovery &amp; evidence</a><a routerLink="/history" routerLinkActive="active">Investigation history</a></nav>
-<div class="legacy"><small>Existing lab tools</small><a href="/lab" target="_blank" rel="noopener">Three-way investigation ↗</a><a href="/intelligence.html" target="_blank" rel="noopener">Runtime & dependency analysis ↗</a></div><footer>v0.5.3 · Integration intelligence</footer></aside><main><router-outlet /></main></div>`})
+<div class="legacy"><small>Existing lab tools</small><a href="/lab" target="_blank" rel="noopener">Three-way investigation ↗</a><a href="/intelligence.html" target="_blank" rel="noopener">Runtime & dependency analysis ↗</a></div><footer>v0.5.4 · Integration intelligence</footer></aside><main><router-outlet /></main></div>`})
 export class App {}
 
 @Directive()
